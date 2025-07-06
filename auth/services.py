@@ -9,6 +9,15 @@ from datetime import datetime
 from sqlalchemy import update
 from pydantic import ValidationError
 from authlib.integrations.starlette_client import OAuth
+from auth.oauth_providers import (
+    GoogleOAuthProvider,
+    MicrosoftOAuthProvider,
+    GithubOAuthProvider,
+)
+
+google_provider = GoogleOAuthProvider()
+microsoft_provider = MicrosoftOAuthProvider()
+github_provider = GithubOAuthProvider()
 
 from config.settings import settings
 from auth.models import User, RefreshToken, AuthType
@@ -38,21 +47,7 @@ class AuthService:
     async def handle_microsoft_login(request: Request):
         """Handle Microsoft OAuth login with business logic"""
         try:
-            if not settings.oauth_microsoft:
-                settings.oauth_microsoft = OAuth()
-                
-                settings.oauth_microsoft.register(
-                    name='microsoft',
-                    client_id=settings.microsoft_client_id,
-                    client_secret=settings.microsoft_client_secret,
-                    server_metadata_url='https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration',
-                    client_kwargs={
-                        'scope': 'openid email profile',
-                    }
-                )
-            
-            redirect_uri = request.url_for('microsoft_auth_callback')
-            return await settings.oauth_microsoft.microsoft.authorize_redirect(request, redirect_uri)
+            return await microsoft_provider.login(request, 'microsoft_auth_callback')
         except Exception as e:
             logger.error(f"Microsoft OAuth setup error: {str(e)}")
             raise InternalServerError("Microsoft OAuth service is temporarily unavailable", "OAUTH_SETUP_ERROR")
@@ -61,21 +56,7 @@ class AuthService:
     async def handle_google_login(request: Request):
         """Handle Google OAuth login with business logic"""
         try:
-            if not settings.oauth_google:
-                settings.oauth_google = OAuth()
-
-                settings.oauth_google.register(
-                    name='google',
-                    client_id=settings.google_client_id,
-                    client_secret=settings.google_client_secret,
-                    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-                    client_kwargs={
-                        'scope': 'email openid profile',
-                    }
-                )
-
-            redirect_uri = request.url_for('google_auth_callback')
-            return await settings.oauth_google.google.authorize_redirect(request, redirect_uri)
+            return await google_provider.login(request, 'google_auth_callback')
         except Exception as e:
             logger.error(f"Google OAuth setup error: {str(e)}")
             raise InternalServerError("Google OAuth service is temporarily unavailable", "OAUTH_SETUP_ERROR")
@@ -84,19 +65,7 @@ class AuthService:
     async def handle_github_login(request: Request):
         """Handle GitHub OAuth login with business logic"""
         try:
-            if not settings.oauth_github:
-                settings.oauth_github = OAuth()
-                settings.oauth_github.register(
-                    name='github',
-                    client_id=settings.github_client_id,
-                    client_secret=settings.github_client_secret,
-                    access_token_url='https://github.com/login/oauth/access_token',
-                    authorize_url='https://github.com/login/oauth/authorize',
-                    api_base_url='https://api.github.com/',
-                    client_kwargs={'scope': 'user:email'},
-                )
-            redirect_uri = request.url_for('github_callback')
-            return await settings.oauth_github.github.authorize_redirect(request, redirect_uri)
+            return await github_provider.login(request, 'github_callback')
         except Exception as e:
             logger.error(f"GitHub OAuth setup error: {str(e)}")
             raise InternalServerError("GitHub OAuth service is temporarily unavailable", "OAUTH_SETUP_ERROR")
@@ -277,18 +246,14 @@ class AuthService:
     async def handle_google_callback(self, request: Request):
         """Handle Google OAuth callback with user creation/authentication logic"""
         try:
-            token = await settings.oauth_google.google.authorize_access_token(request)
-            user_info = token.get('userinfo')
-            
-            if not user_info:
+            user_info = await google_provider.callback(request)
+
+            if not user_info or not user_info.get('email'):
                 raise UnauthorizedError("Failed to retrieve user information from Google", "OAUTH_USER_INFO_ERROR")
 
-            email = user_info.get('email')
-            if not email:
-                raise UnauthorizedError("Email not provided by Google", "OAUTH_EMAIL_MISSING")
-                
-            first_name = user_info.get('given_name', '')
-            last_name = user_info.get('family_name', '')
+            email = user_info['email']
+            first_name = user_info.get('first_name', '')
+            last_name = user_info.get('last_name', '')
             
             # Get or create user
             user_in_db = await self.auth_dao.get_user_by_email(email)
@@ -323,18 +288,14 @@ class AuthService:
     async def handle_microsoft_callback(self, request: Request):
         """Handle Microsoft OAuth callback with user creation/authentication logic"""
         try:
-            token = await settings.oauth_microsoft.microsoft.authorize_access_token(request)
-            user_info = token.get('userinfo')
-            
-            if not user_info:
+            user_info = await microsoft_provider.callback(request)
+
+            if not user_info or not user_info.get('email'):
                 raise UnauthorizedError("Failed to retrieve user information from Microsoft", "OAUTH_USER_INFO_ERROR")
 
-            email = user_info.get('email')
-            if not email:
-                raise UnauthorizedError("Email not provided by Microsoft", "OAUTH_EMAIL_MISSING")
-                
-            first_name = user_info.get('given_name', '')
-            last_name = user_info.get('family_name', '')
+            email = user_info['email']
+            first_name = user_info.get('first_name', '')
+            last_name = user_info.get('last_name', '')
             
             # Get or create user
             user_in_db = await self.auth_dao.get_user_by_email(email)
@@ -369,26 +330,14 @@ class AuthService:
     async def handle_github_callback(self, request: Request):
         """Handle GitHub OAuth callback with user creation/authentication logic"""
         try:
-            token = await settings.oauth_github.github.authorize_access_token(request)
-            
-            # Get user info from GitHub API
-            resp = await settings.oauth_github.github.get('user', token=token)
-            user_info = resp.json()
-            
-            # Get user email if not public
-            if not user_info.get('email'):
-                resp = await settings.oauth_github.github.get('user/emails', token=token)
-                emails = resp.json()
-                primary_email = next((email['email'] for email in emails if email['primary']), None)
-                user_info['email'] = primary_email
-            
+            user_info = await github_provider.callback(request)
+
             if not user_info or not user_info.get('email'):
                 raise UnauthorizedError("Failed to retrieve email from GitHub", "GITHUB_EMAIL_ERROR")
 
             email = user_info['email']
-            name_parts = (user_info.get('name', '')).split(' ', 1)
-            first_name = name_parts[0] if name_parts else ''
-            last_name = name_parts[1] if len(name_parts) > 1 else ''
+            first_name = user_info.get('first_name', '')
+            last_name = user_info.get('last_name', '')
             
             # Get or create user
             user_in_db = await self.auth_dao.get_user_by_email(email)
