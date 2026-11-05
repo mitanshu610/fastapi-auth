@@ -40,7 +40,7 @@ class AuthService:
         try:
             if not settings.oauth_microsoft:
                 settings.oauth_microsoft = OAuth()
-                
+
                 settings.oauth_microsoft.register(
                     name='microsoft',
                     client_id=settings.microsoft_client_id,
@@ -112,7 +112,7 @@ class AuthService:
 
             # Hash password and determine verification status
             hashed_password = await get_password_hash(user.password)
-            verification_required = not bool(code)
+            verification_required = settings.is_production and not bool(code)
 
             # Create user data
             user_data = {
@@ -127,23 +127,7 @@ class AuthService:
             # Create user
             db_user = await self.auth_dao.create_user(user_data)
             
-            if not code:
-                # Send verification email
-                background_tasks.add_task(
-                    send_email_verification,
-                    redis_client=self.redis_client,
-                    email=db_user.email,
-                    first_name=db_user.first_name,
-                    title="email_verification"
-                )
-                logger.info(f"User {db_user.email} registered successfully. Verification email sent.")
-                
-                return ResponseData(
-                    success=True,
-                    message="User registered successfully. Please check your email for verification link.",
-                    data=UserRead.model_validate(db_user)
-                ).model_dump()
-            else:
+            if code:
                 # Handle organization invitation
                 try:
                     redis_code_value = await self.redis_client.get("invitation_email:" + code)
@@ -161,7 +145,31 @@ class AuthService:
                 except Exception as e:
                     logger.error(f"Organization invitation processing error: {str(e)}")
                     raise InternalServerError("Failed to process organization invitation", "INVITATION_PROCESSING_ERROR")
-                
+
+            if verification_required:
+                # Production registrations require email verification.
+                background_tasks.add_task(
+                    send_email_verification,
+                    redis_client=self.redis_client,
+                    email=db_user.email,
+                    first_name=db_user.first_name,
+                    title="email_verification"
+                )
+                logger.info(f"User {db_user.email} registered successfully. Verification email sent.")
+
+                return ResponseData(
+                    success=True,
+                    message="User registered successfully. Please check your email for verification link.",
+                    data=UserRead.model_validate(db_user)
+                ).model_dump()
+
+            logger.info(f"User {db_user.email} registered successfully without email verification.")
+            return ResponseData(
+                success=True,
+                message="User registered successfully. Email verification is disabled outside production.",
+                data=UserRead.model_validate(db_user)
+            ).model_dump()
+
         except ValidationError as e:
             logger.error(f"Validation error during registration: {e.errors()}")
             await self.db.rollback()
@@ -286,7 +294,10 @@ class AuthService:
             email = user_info.get('email')
             if not email:
                 raise UnauthorizedError("Email not provided by Google", "OAUTH_EMAIL_MISSING")
-                
+
+            if settings.is_production and user_info.get('email_verified') is not True:
+                raise UnauthorizedError("Google account email is not verified", "OAUTH_EMAIL_UNVERIFIED")
+
             first_name = user_info.get('given_name', '')
             last_name = user_info.get('family_name', '')
             
@@ -332,7 +343,7 @@ class AuthService:
             email = user_info.get('email')
             if not email:
                 raise UnauthorizedError("Email not provided by Microsoft", "OAUTH_EMAIL_MISSING")
-                
+
             first_name = user_info.get('given_name', '')
             last_name = user_info.get('family_name', '')
             
@@ -375,11 +386,28 @@ class AuthService:
             resp = await settings.oauth_github.github.get('user', token=token)
             user_info = resp.json()
             
-            # Get user email if not public
-            if not user_info.get('email'):
+            # Require a verified primary email in production. Development can
+            # use the primary email returned by GitHub without this check.
+            if settings.is_production:
                 resp = await settings.oauth_github.github.get('user/emails', token=token)
                 emails = resp.json()
-                primary_email = next((email['email'] for email in emails if email['primary']), None)
+                primary_email = next(
+                    (
+                        item['email'] for item in emails
+                        if item.get('primary') and item.get('verified')
+                    ),
+                    None,
+                )
+                if not primary_email:
+                    raise UnauthorizedError(
+                        "GitHub account has no verified primary email",
+                        "OAUTH_EMAIL_UNVERIFIED",
+                    )
+                user_info['email'] = primary_email
+            elif not user_info.get('email'):
+                resp = await settings.oauth_github.github.get('user/emails', token=token)
+                emails = resp.json()
+                primary_email = next((item['email'] for item in emails if item.get('primary')), None)
                 user_info['email'] = primary_email
             
             if not user_info or not user_info.get('email'):
@@ -426,8 +454,17 @@ class AuthService:
                 logger.warning(f"Email verification attempt with invalid code: {code}")
                 raise UnauthorizedError("Invalid or expired verification code", "INVALID_VERIFICATION_CODE")
             
-            json_object = json.loads(redis_code_value)
-            email = json_object.get("email")
+            try:
+                verification_data = json.loads(redis_code_value)
+            except json.JSONDecodeError:
+                # Older verification entries store the email as a plain string.
+                verification_data = redis_code_value
+
+            email = (
+                verification_data.get("email")
+                if isinstance(verification_data, dict)
+                else verification_data
+            )
             
             if not email:
                 raise InternalServerError("Invalid verification data", "VERIFICATION_DATA_ERROR")
@@ -539,4 +576,4 @@ class AuthService:
             }
         except Exception as e:
             logger.error(f"OAuth token creation error: {str(e)}")
-            raise InternalServerError("Failed to create authentication tokens", "OAUTH_TOKEN_ERROR") 
+            raise InternalServerError("Failed to create authentication tokens", "OAUTH_TOKEN_ERROR")

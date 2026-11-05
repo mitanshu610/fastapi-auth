@@ -3,11 +3,12 @@ import secrets
 from datetime import timedelta, datetime, timezone
 from typing import Dict, Any, Optional
 from pyseto import Key, encode, decode
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.settings import settings
 from utils.custom_logger import logger
-from auth.models import RefreshToken, TokenType
+from auth.models import RefreshToken, TokenType, User
 from utils.base_auth import BaseAuth
 from context.services import ContextService
 
@@ -92,12 +93,16 @@ class PasetoAuth(BaseAuth):
         nonce = secrets.token_hex(32)
         data.update({"nonce": nonce})
         token = encode(key, json.dumps(data)).decode('utf-8')
+        user_id = await db.scalar(select(User.id).where(User.email == data["sub"]))
+        if user_id is None:
+            raise ValueError("Cannot store a refresh token for an unknown user")
+
         db_refresh_token = RefreshToken(
-            user_email=data["sub"],
+            user_id=user_id,
             token=token,
             token_type=TokenType(settings.auth_mode),
             nonce=nonce,
-            expires_at=datetime.now(timezone.utc) + expires_delta,
+            expires_at=(datetime.now(timezone.utc) + expires_delta).replace(tzinfo=None),
             revoked=False
         )
         db.add(db_refresh_token)
@@ -130,4 +135,4 @@ class PasetoAuth(BaseAuth):
             return payload_json
         except Exception:
             logger.error(f"Token verification for {settings.auth_mode} failed!")
-            return None 
+            return None

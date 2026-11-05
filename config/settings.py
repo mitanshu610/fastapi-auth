@@ -8,6 +8,7 @@ from db.redis_connection import RedisClient
 
 
 class Settings(BaseSettings):
+    app_env: str = "dev"
     access_token_expire_minutes: int
     refresh_token_expire_days: int
     secret_key: str
@@ -38,6 +39,10 @@ class Settings(BaseSettings):
     redis_client: Optional[RedisClient] = None
     
     permissions: Optional[Dict] = None
+
+    @property
+    def is_production(self) -> bool:
+        return self.app_env.strip().lower() in {"prod", "production"}
 
     class Config:
         env_file = ".env"

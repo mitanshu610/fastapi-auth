@@ -1,9 +1,10 @@
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional
 from jose import jwt
+from sqlalchemy import select
 from config.settings import settings
 from utils.custom_logger import logger
-from auth.models import RefreshToken, TokenType
+from auth.models import RefreshToken, TokenType, User
 from sqlalchemy.ext.asyncio import AsyncSession
 from utils.base_auth import BaseAuth
 from context.services import ContextService
@@ -87,12 +88,18 @@ class JWTAuth(BaseAuth):
         """
         expire = datetime.now(timezone.utc) + expires_delta
         token = jwt.encode(data, settings.secret_key, algorithm=settings.algorithm)
+        user_id = await db.scalar(select(User.id).where(User.email == data["sub"]))
+        if user_id is None:
+            raise ValueError("Cannot store a refresh token for an unknown user")
+
         db_refresh_token = RefreshToken(
-            user_email=data["sub"],
+            user_id=user_id,
             token=token,
             token_type=TokenType(settings.auth_mode),
             nonce=None,
-            expires_at=expire,
+            # The existing PostgreSQL column is TIMESTAMP WITHOUT TIME ZONE;
+            # store UTC as a naive timestamp to match its schema.
+            expires_at=expire.replace(tzinfo=None),
             revoked=False
         )
         db.add(db_refresh_token)
@@ -122,4 +129,4 @@ class JWTAuth(BaseAuth):
                     return None
             return payload
         except jwt.JWTError:
-            return None 
+            return None

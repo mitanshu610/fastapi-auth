@@ -108,7 +108,7 @@ def clear_permissions_cache():
 
 class PermissionMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        if "/auth" or "/docs" in request.url.path:
+        if "/auth" in request.url.path or "/docs" in request.url.path:
                 return await call_next(request)
         try:
             # Extract database session
