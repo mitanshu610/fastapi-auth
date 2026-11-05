@@ -145,15 +145,12 @@ A comprehensive authentication and authorization system built with **FastAPI**, 
 
 3. **Start the services**
    ```bash
-   docker-compose up -d
+   docker compose up --build -d
    ```
 
-4. **Run database migrations**
-   ```bash
-   docker-compose exec app alembic upgrade head
-   ```
+   The app waits for PostgreSQL and Redis to become healthy, applies database migrations, and then starts.
 
-5. **Access the application**
+4. **Access the application**
    - API Documentation: http://localhost:8000/docs
    - ReDoc Documentation: http://localhost:8000/redoc
 
@@ -161,13 +158,13 @@ A comprehensive authentication and authorization system built with **FastAPI**, 
 
 1. **Install dependencies**
    ```bash
-   pip install -r requirements/dev.txt
+   pip install -r requirements/requirements.txt
    ```
 
 2. **Set up database**
    ```bash
    # Start PostgreSQL and Redis
-   docker-compose up -d db redis
+   docker compose up -d db redis
    
    # Run migrations
    alembic upgrade head
