@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   app:
     build: .
@@ -8,22 +6,55 @@ services:
     volumes:
       - .:/usr/src/app
     environment:
-      - ACCESS_TOKEN_EXPIRE_MINUTES=15
-      - REFRESH_TOKEN_EXPIRE_DAYS=7
-      - SECRET_KEY=oGZGMadkunyMgtSxgV8dFg2UWkaqxYUvopvsvK7axrm61UekefE7mQrhQLJTt37E
-      - ALGORITHM=HS256
-      - DATABASE_URL=postgresql+asyncpg://authdb_owner:0MFqZ9rjyEUX@ep-falling-dust-a1nu2soz-pooler.ap-southeast-1.aws.neon.tech/authdb?sslmode=require
-      - AUTH_MODE=jwt
-      - GOOGLE_CLIENT_ID=temp
-      - GOOGLE_CLIENT_SECRET=temp
-      - GITHUB_CLIENT_ID=temp
-      - GITHUB_CLIENT_SECRET=temp
-      - HINATA_HOST=temp
-      - SMTP_NETCORE=temp
+      ACCESS_TOKEN_EXPIRE_MINUTES: "${ACCESS_TOKEN_EXPIRE_MINUTES:-15}"
+      REFRESH_TOKEN_EXPIRE_DAYS: "${REFRESH_TOKEN_EXPIRE_DAYS:-7}"
+      SECRET_KEY: "${SECRET_KEY:-local-development-only-change-me}"
+      ALGORITHM: "${ALGORITHM:-HS256}"
+      DATABASE_URL: "${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@db:5432/fastapi_auth}"
+      REDIS_DATABASE_URL: "${REDIS_DATABASE_URL:-redis://redis:6379/1}"
+      AUTH_MODE: "${AUTH_MODE:-jwt}"
+      GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
+      GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET:-}"
+      GITHUB_CLIENT_ID: "${GITHUB_CLIENT_ID:-}"
+      GITHUB_CLIENT_SECRET: "${GITHUB_CLIENT_SECRET:-}"
+      MICROSOFT_CLIENT_ID: "${MICROSOFT_CLIENT_ID:-}"
+      MICROSOFT_CLIENT_SECRET: "${MICROSOFT_CLIENT_SECRET:-}"
+      HINATA_HOST: "${HINATA_HOST:-localhost}"
+      EMAIL_PROVIDER: "${EMAIL_PROVIDER:-netcore}"
+      SMTP_FROM_EMAIL: "${SMTP_FROM_EMAIL:-no-reply@example.com}"
+      SMTP_NETCORE: "${SMTP_NETCORE:-}"
+    command: ["sh", "-c", "alembic upgrade head && python main.py"]
     depends_on:
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   redis:
-    image: "redis:alpine"
+    image: redis:alpine
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: fastapi_auth
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fastapi_auth"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:
