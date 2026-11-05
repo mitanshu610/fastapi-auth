@@ -139,6 +139,7 @@ A comprehensive authentication and authorization system built with **FastAPI**, 
    SMTP_NETCORE=your-netcore-api-key
    
    # Application
+   APP_ENV=dev  # Use 'prod' to require email verification
    HINATA_HOST=yourdomain.com
    AUTH_MODE=jwt  # or 'paseto'
    ```

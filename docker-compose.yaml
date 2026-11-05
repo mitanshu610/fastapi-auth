@@ -6,6 +6,7 @@ services:
     volumes:
       - .:/usr/src/app
     environment:
+      APP_ENV: "${APP_ENV:-dev}"
       ACCESS_TOKEN_EXPIRE_MINUTES: "${ACCESS_TOKEN_EXPIRE_MINUTES:-15}"
       REFRESH_TOKEN_EXPIRE_DAYS: "${REFRESH_TOKEN_EXPIRE_DAYS:-7}"
       SECRET_KEY: "${SECRET_KEY:-local-development-only-change-me}"
