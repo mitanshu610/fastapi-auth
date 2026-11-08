@@ -14,7 +14,8 @@ class TestRolesEndpoints:
     @pytest.fixture
     def client(self):
         """Test client fixture"""
-        return TestClient(app)
+        with TestClient(app) as test_client:
+            yield test_client
 
     @pytest.fixture
     def mock_auth_headers(self):
@@ -29,7 +30,7 @@ class TestRolesEndpoints:
             "slug": "test-role"
         }
         
-        with patch('roles.services.RoleService.create_role') as mock_create:
+        with patch('roles.services.RoleService.create_new_role') as mock_create:
             mock_create.return_value = {
                 "success": True,
                 "message": "Role created successfully",
@@ -75,7 +76,7 @@ class TestRolesEndpoints:
 
     def test_get_all_roles_success(self, client, mock_auth_headers):
         """Test successful retrieval of all roles"""
-        with patch('roles.services.RoleService.get_all_roles') as mock_get:
+        with patch('roles.services.RoleService.retrieve_all_roles') as mock_get:
             mock_get.return_value = {
                 "success": True,
                 "data": [
@@ -108,7 +109,7 @@ class TestRolesEndpoints:
         """Test successful retrieval of role by ID"""
         role_id = 1
         
-        with patch('roles.services.RoleService.get_role_by_id') as mock_get:
+        with patch('roles.services.RoleService.retrieve_role_by_id') as mock_get:
             mock_get.return_value = {
                 "success": True,
                 "data": {
@@ -133,7 +134,7 @@ class TestRolesEndpoints:
         """Test retrieval of non-existent role"""
         role_id = 999
         
-        with patch('roles.services.RoleService.get_role_by_id') as mock_get:
+        with patch('roles.services.RoleService.retrieve_role_by_id') as mock_get:
             mock_get.side_effect = Exception("Role not found")
             
             response = client.get(
@@ -146,7 +147,7 @@ class TestRolesEndpoints:
         """Test successful retrieval of role by slug"""
         slug = "admin"
         
-        with patch('roles.services.RoleService.get_role_by_slug') as mock_get:
+        with patch('roles.services.RoleService.retrieve_role_by_slug') as mock_get:
             mock_get.return_value = {
                 "success": True,
                 "data": {
@@ -171,7 +172,7 @@ class TestRolesEndpoints:
         """Test retrieval of non-existent role by slug"""
         slug = "nonexistent"
         
-        with patch('roles.services.RoleService.get_role_by_slug') as mock_get:
+        with patch('roles.services.RoleService.retrieve_role_by_slug') as mock_get:
             mock_get.side_effect = Exception("Role not found")
             
             response = client.get(
@@ -188,7 +189,7 @@ class TestRolesEndpoints:
             "description": "Updated description"
         }
         
-        with patch('roles.services.RoleService.update_role') as mock_update:
+        with patch('roles.services.RoleService.modify_role') as mock_update:
             mock_update.return_value = {
                 "success": True,
                 "message": "Role updated successfully",
@@ -216,7 +217,7 @@ class TestRolesEndpoints:
         role_id = 999
         update_data = {"name": "Updated Role"}
         
-        with patch('roles.services.RoleService.update_role') as mock_update:
+        with patch('roles.services.RoleService.modify_role') as mock_update:
             mock_update.side_effect = Exception("Role not found")
             
             response = client.put(
@@ -230,7 +231,7 @@ class TestRolesEndpoints:
         """Test successful role deletion"""
         role_id = 1
         
-        with patch('roles.services.RoleService.delete_role') as mock_delete:
+        with patch('roles.services.RoleService.remove_role') as mock_delete:
             mock_delete.return_value = {
                 "success": True,
                 "message": "Role deleted successfully"
@@ -250,7 +251,7 @@ class TestRolesEndpoints:
         """Test deletion of non-existent role"""
         role_id = 999
         
-        with patch('roles.services.RoleService.delete_role') as mock_delete:
+        with patch('roles.services.RoleService.remove_role') as mock_delete:
             mock_delete.side_effect = Exception("Role not found")
             
             response = client.delete(
@@ -264,7 +265,7 @@ class TestRolesEndpoints:
         role_id = 1
         permission_id = 1
         
-        with patch('roles.services.RoleService.assign_permission_to_role') as mock_assign:
+        with patch('roles.services.RoleService.assign_permission') as mock_assign:
             mock_assign.return_value = {
                 "success": True,
                 "message": "Permission assigned to role successfully",
@@ -291,7 +292,7 @@ class TestRolesEndpoints:
         role_id = 999
         permission_id = 1
         
-        with patch('roles.services.RoleService.assign_permission_to_role') as mock_assign:
+        with patch('roles.services.RoleService.assign_permission') as mock_assign:
             mock_assign.side_effect = Exception("Role not found")
             
             response = client.post(
@@ -305,7 +306,7 @@ class TestRolesEndpoints:
         role_id = 1
         permission_id = 999
         
-        with patch('roles.services.RoleService.assign_permission_to_role') as mock_assign:
+        with patch('roles.services.RoleService.assign_permission') as mock_assign:
             mock_assign.side_effect = Exception("Permission not found")
             
             response = client.post(
@@ -319,7 +320,7 @@ class TestRolesEndpoints:
         role_id = 1
         permission_id = 1
         
-        with patch('roles.services.RoleService.remove_permission_from_role') as mock_remove:
+        with patch('roles.services.RoleService.remove_permission') as mock_remove:
             mock_remove.return_value = {
                 "success": True,
                 "message": "Permission removed from role successfully"
@@ -340,7 +341,7 @@ class TestRolesEndpoints:
         role_id = 999
         permission_id = 1
         
-        with patch('roles.services.RoleService.remove_permission_from_role') as mock_remove:
+        with patch('roles.services.RoleService.remove_permission') as mock_remove:
             mock_remove.side_effect = Exception("Role not found")
             
             response = client.delete(
@@ -354,7 +355,7 @@ class TestRolesEndpoints:
         role_id = 1
         permission_id = 999
         
-        with patch('roles.services.RoleService.remove_permission_from_role') as mock_remove:
+        with patch('roles.services.RoleService.remove_permission') as mock_remove:
             mock_remove.side_effect = Exception("Permission not found")
             
             response = client.delete(
@@ -395,7 +396,7 @@ class TestRolesEndpoints:
             "slug": "admin"  # Assuming this slug already exists
         }
         
-        with patch('roles.services.RoleService.create_role') as mock_create:
+        with patch('roles.services.RoleService.create_new_role') as mock_create:
             mock_create.side_effect = Exception("Role with this slug already exists")
             
             response = client.post(
@@ -419,4 +420,4 @@ class TestRolesEndpoints:
         )
         # This might pass validation if no slug format validation is implemented
         # or might fail with 422 if validation exists
-        assert response.status_code in [status.HTTP_200_OK, status.HTTP_422_UNPROCESSABLE_ENTITY, status.HTTP_500_INTERNAL_SERVER_ERROR] 
+        assert response.status_code in [status.HTTP_200_OK, status.HTTP_422_UNPROCESSABLE_ENTITY, status.HTTP_500_INTERNAL_SERVER_ERROR]

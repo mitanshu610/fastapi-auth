@@ -26,7 +26,7 @@ class JWTAuth(BaseAuth):
         """
         to_encode = data.copy()
         expire = datetime.now(timezone.utc) + expires_delta
-        to_encode.update({"exp": expire.isoformat()})
+        to_encode.update({"exp": int(expire.timestamp())})
         encoded_jwt = jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
         return encoded_jwt
 
@@ -65,7 +65,7 @@ class JWTAuth(BaseAuth):
         
         # Add expiration
         expire = datetime.now(timezone.utc) + expires_delta
-        payload_data.update({"exp": expire.isoformat()})
+        payload_data.update({"exp": int(expire.timestamp())})
         
         encoded_jwt = jwt.encode(payload_data, settings.secret_key, algorithm=settings.algorithm)
         return encoded_jwt
@@ -121,12 +121,30 @@ class JWTAuth(BaseAuth):
         jwt.JWTError: If there is an error decoding the token.
         """
         try:
-            payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
-            if "exp" in payload:
-                exp = datetime.fromisoformat(payload["exp"])
-                if exp < datetime.now(timezone.utc):
+            # Disable jose's exp check here so previously issued ISO-string
+            # expirations remain readable while new tokens use JWT NumericDate.
+            payload = jwt.decode(
+                token,
+                settings.secret_key,
+                algorithms=[settings.algorithm],
+                options={"verify_exp": False},
+            )
+            raw_exp = payload.get("exp")
+            if raw_exp is not None:
+                if isinstance(raw_exp, bool):
+                    return None
+                if isinstance(raw_exp, (int, float)):
+                    expires_at = datetime.fromtimestamp(raw_exp, tz=timezone.utc)
+                elif isinstance(raw_exp, str):
+                    expires_at = datetime.fromisoformat(raw_exp.replace("Z", "+00:00"))
+                    if expires_at.tzinfo is None:
+                        expires_at = expires_at.replace(tzinfo=timezone.utc)
+                else:
+                    return None
+
+                if expires_at <= datetime.now(timezone.utc):
                     logger.error("Token has expired.")
                     return None
             return payload
-        except jwt.JWTError:
+        except (jwt.JWTError, TypeError, ValueError, OverflowError):
             return None

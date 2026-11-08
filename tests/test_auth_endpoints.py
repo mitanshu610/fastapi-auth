@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 import json
 
 from app.server import app
+from utils.exceptions import ConflictError, UnauthorizedError
 
 
 class TestAuthEndpoints:
@@ -14,7 +15,8 @@ class TestAuthEndpoints:
     @pytest.fixture
     def client(self):
         """Test client fixture"""
-        return TestClient(app)
+        with TestClient(app) as test_client:
+            yield test_client
 
     def test_register_user_success(self, client):
         """Test successful user registration"""
@@ -77,10 +79,10 @@ class TestAuthEndpoints:
         }
         
         with patch('auth.services.AuthService.register_user') as mock_register:
-            mock_register.side_effect = Exception("User already exists")
+            mock_register.side_effect = ConflictError("User with this email already exists")
             
             response = client.post("/auth/register", json=user_data)
-            assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+            assert response.status_code == status.HTTP_409_CONFLICT
 
     def test_login_user_success(self, client):
         """Test successful user login"""
@@ -116,10 +118,10 @@ class TestAuthEndpoints:
         }
         
         with patch('auth.services.AuthService.authenticate_and_create_tokens') as mock_auth:
-            mock_auth.side_effect = Exception("Invalid credentials")
+            mock_auth.side_effect = UnauthorizedError("Invalid email or password")
             
             response = client.post("/auth/login", data=login_data)
-            assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+            assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     def test_refresh_token_success(self, client):
         """Test successful token refresh"""
@@ -144,10 +146,10 @@ class TestAuthEndpoints:
     def test_refresh_token_invalid(self, client):
         """Test token refresh with invalid token"""
         with patch('auth.services.AuthService.refresh_user_token') as mock_refresh:
-            mock_refresh.side_effect = Exception("Invalid token")
+            mock_refresh.side_effect = UnauthorizedError("Invalid or expired token")
             
             response = client.post("/auth/refresh?refresh_token=invalid_token")
-            assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+            assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     def test_revoke_token_success(self, client):
         """Test successful token revocation"""

@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from auth.dependencies import get_current_user
+from auth.dependencies import get_current_user, oauth2_scheme
 from organizations.models import OrganizationUser
 from teams.models import TeamMember
 from utils.custom_logger import logger
@@ -114,8 +114,11 @@ class PermissionMiddleware(BaseHTTPMiddleware):
             # Extract database session
             db: AsyncSession = request.state.db
 
-            # Extract current user
-            current_user = await get_current_user(request)
+            # Resolve the bearer token as FastAPI would for a route dependency.
+            # Calling get_current_user(request) directly passes the Request object
+            # as its token argument and fails during token verification.
+            token = await oauth2_scheme(request)
+            current_user = await get_current_user(token=token, db=db)
 
             # Parse endpoint, HTTP method, and identify scope/context
             endpoint = request.url.path
