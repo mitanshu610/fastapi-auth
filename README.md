@@ -1,14 +1,12 @@
 # FastAPI Authentication & Authorization System
 
-A comprehensive authentication and authorization system built with **FastAPI**, featuring multiple authentication providers, advanced token management, and a robust Role-Based Access Control (RBAC) system.
+A comprehensive authentication and authorization system built with **FastAPI**, featuring local password authentication, token management, and a robust Role-Based Access Control (RBAC) system.
 
 ## Features
 
 ### 🔐 Authentication
 - **Local Authentication** with secure password hashing
-- **OAuth Integration** with Google, GitHub, and Microsoft
 - **Multi-token Support**: JWT and PASETO tokens
-- **Email Verification** and password reset functionality
 - **Token Refresh** and revocation mechanisms
 
 ### 🏢 Authorization & RBAC
@@ -36,9 +34,7 @@ A comprehensive authentication and authorization system built with **FastAPI**, 
 - **Database**: PostgreSQL with SQLAlchemy (async)
 - **Cache**: Redis
 - **Authentication**: JWT, PASETO
-- **OAuth**: Google, GitHub, Microsoft
 - **Password Hashing**: bcrypt via passlib
-- **Email**: Configurable email providers
 - **Testing**: pytest with async support
 - **Containerization**: Docker & Docker Compose
 
@@ -125,22 +121,6 @@ A comprehensive authentication and authorization system built with **FastAPI**, 
    ACCESS_TOKEN_EXPIRE_MINUTES=15
    REFRESH_TOKEN_EXPIRE_DAYS=7
    
-   # OAuth Providers (optional)
-   GOOGLE_CLIENT_ID=your-google-client-id
-   GOOGLE_CLIENT_SECRET=your-google-client-secret
-   GITHUB_CLIENT_ID=your-github-client-id
-   GITHUB_CLIENT_SECRET=your-github-client-secret
-   MICROSOFT_CLIENT_ID=your-microsoft-client-id
-   MICROSOFT_CLIENT_SECRET=your-microsoft-client-secret
-   
-   # Email Configuration
-   EMAIL_PROVIDER=netcore
-   SMTP_FROM_EMAIL=no-reply@yourdomain.com
-   SMTP_NETCORE=your-netcore-api-key
-   
-   # Application
-   APP_ENV=dev  # Use 'prod' to require email verification
-   HINATA_HOST=yourdomain.com
    AUTH_MODE=jwt  # or 'paseto'
    ```
 
@@ -186,20 +166,8 @@ A comprehensive authentication and authorization system built with **FastAPI**, 
 | `/auth/login` | POST | Login with email/password |
 | `/auth/refresh` | POST | Refresh access token |
 | `/auth/revoke` | POST | Revoke refresh token |
-| `/auth/verify-email` | POST | Verify user email |
-| `/auth/forgot-password` | POST | Request password reset |
-| `/auth/reset-password` | POST | Reset password with code |
 
-### OAuth
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/auth/google` | GET | Initiate Google OAuth |
-| `/auth/google/callback` | GET | Google OAuth callback |
-| `/auth/github` | GET | Initiate GitHub OAuth |
-| `/auth/github/callback` | GET | GitHub OAuth callback |
-| `/auth/microsoft` | GET | Initiate Microsoft OAuth |
-| `/auth/microsoft/callback` | GET | Microsoft OAuth callback |
+Users register with a local password and can log in immediately. Email verification, email-based password recovery, and email invitations are not available. Organization admins can add users after those users have registered.
 
 ### Organizations
 
@@ -292,7 +260,7 @@ pytest -v
 
 ### Test Coverage
 
-- Authentication endpoints (register, login, OAuth, etc.)
+- Authentication endpoints (register, login, token refresh and revocation)
 - Organizations management
 - Teams management
 - Roles and permissions
@@ -311,15 +279,6 @@ pytest -v
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Access token expiry | 15 |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | Refresh token expiry | 7 |
 | `AUTH_MODE` | Token type (jwt/paseto) | jwt |
-| `EMAIL_PROVIDER` | Email service provider | netcore |
-
-### OAuth Configuration
-
-To enable OAuth providers, set the respective client ID and secret environment variables:
-
-- **Google**: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
-- **GitHub**: `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`
-- **Microsoft**: `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`
 
 ## Security Considerations
 

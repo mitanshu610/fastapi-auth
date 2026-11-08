@@ -1,19 +1,16 @@
 import json
 from typing import Optional
-from fastapi import Request, BackgroundTasks
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import timedelta, timezone
 from jose import jwt, JWTError
 from datetime import datetime
-from sqlalchemy import update
 from pydantic import ValidationError
-from authlib.integrations.starlette_client import OAuth
 
 from config.settings import settings
-from auth.models import User, RefreshToken, AuthType
-from auth.schemas import UserCreate, UserRead, Token
-from auth.utils import get_password_hash, authenticate_user, send_email_verification, send_forgot_password_email
+from auth.models import RefreshToken
+from auth.schemas import UserCreate, UserRead
+from auth.utils import get_password_hash, authenticate_user
 from auth.dao import AuthDAO
 from organizations.dao import OrganizationDAO
 from utils.custom_logger import logger
@@ -21,7 +18,7 @@ from db.redis_connection import RedisClient
 from utils.serializers import ResponseData
 from utils.exceptions import (
     NotFoundError, ValidationError as CustomValidationError, UnauthorizedError, 
-    ConflictError, InternalServerError, DatabaseError
+    ConflictError, InternalServerError
 )
 
 
@@ -34,74 +31,7 @@ class AuthService:
         self.org_dao = OrganizationDAO(db=db)
         self.redis_client = redis_client
 
-    @staticmethod
-    async def handle_microsoft_login(request: Request):
-        """Handle Microsoft OAuth login with business logic"""
-        try:
-            if not settings.oauth_microsoft:
-                settings.oauth_microsoft = OAuth()
-
-                settings.oauth_microsoft.register(
-                    name='microsoft',
-                    client_id=settings.microsoft_client_id,
-                    client_secret=settings.microsoft_client_secret,
-                    server_metadata_url='https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration',
-                    client_kwargs={
-                        'scope': 'openid email profile',
-                    }
-                )
-            
-            redirect_uri = request.url_for('microsoft_auth_callback')
-            return await settings.oauth_microsoft.microsoft.authorize_redirect(request, redirect_uri)
-        except Exception as e:
-            logger.error(f"Microsoft OAuth setup error: {str(e)}")
-            raise InternalServerError("Microsoft OAuth service is temporarily unavailable", "OAUTH_SETUP_ERROR")
-
-    @staticmethod
-    async def handle_google_login(request: Request):
-        """Handle Google OAuth login with business logic"""
-        try:
-            if not settings.oauth_google:
-                settings.oauth_google = OAuth()
-
-                settings.oauth_google.register(
-                    name='google',
-                    client_id=settings.google_client_id,
-                    client_secret=settings.google_client_secret,
-                    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-                    client_kwargs={
-                        'scope': 'email openid profile',
-                    }
-                )
-
-            redirect_uri = request.url_for('google_auth_callback')
-            return await settings.oauth_google.google.authorize_redirect(request, redirect_uri)
-        except Exception as e:
-            logger.error(f"Google OAuth setup error: {str(e)}")
-            raise InternalServerError("Google OAuth service is temporarily unavailable", "OAUTH_SETUP_ERROR")
-
-    @staticmethod
-    async def handle_github_login(request: Request):
-        """Handle GitHub OAuth login with business logic"""
-        try:
-            if not settings.oauth_github:
-                settings.oauth_github = OAuth()
-                settings.oauth_github.register(
-                    name='github',
-                    client_id=settings.github_client_id,
-                    client_secret=settings.github_client_secret,
-                    access_token_url='https://github.com/login/oauth/access_token',
-                    authorize_url='https://github.com/login/oauth/authorize',
-                    api_base_url='https://api.github.com/',
-                    client_kwargs={'scope': 'user:email'},
-                )
-            redirect_uri = request.url_for('github_callback')
-            return await settings.oauth_github.github.authorize_redirect(request, redirect_uri)
-        except Exception as e:
-            logger.error(f"GitHub OAuth setup error: {str(e)}")
-            raise InternalServerError("GitHub OAuth service is temporarily unavailable", "OAUTH_SETUP_ERROR")
-
-    async def register_user(self, user: UserCreate, background_tasks: BackgroundTasks, code: Optional[str]):
+    async def register_user(self, user: UserCreate, code: Optional[str]):
         """Complete user registration process with business logic"""
         try:
             # Check if user already exists
@@ -110,9 +40,8 @@ class AuthService:
                 logger.warning(f"User registration attempt with existing email: {user.email}")
                 raise ConflictError("User with this email already exists", "USER_EXISTS")
 
-            # Hash password and determine verification status
+            # Local-password registration does not depend on an email delivery service.
             hashed_password = await get_password_hash(user.password)
-            verification_required = settings.is_production and not bool(code)
 
             # Create user data
             user_data = {
@@ -120,7 +49,7 @@ class AuthService:
                 "last_name": user.last_name,
                 "email": user.email,
                 "hashed_password": hashed_password,
-                "verified": not verification_required,
+                "verified": True,
                 "phone_number": user.phone_number
             }
 
@@ -146,27 +75,10 @@ class AuthService:
                     logger.error(f"Organization invitation processing error: {str(e)}")
                     raise InternalServerError("Failed to process organization invitation", "INVITATION_PROCESSING_ERROR")
 
-            if verification_required:
-                # Production registrations require email verification.
-                background_tasks.add_task(
-                    send_email_verification,
-                    redis_client=self.redis_client,
-                    email=db_user.email,
-                    first_name=db_user.first_name,
-                    title="email_verification"
-                )
-                logger.info(f"User {db_user.email} registered successfully. Verification email sent.")
-
-                return ResponseData(
-                    success=True,
-                    message="User registered successfully. Please check your email for verification link.",
-                    data=UserRead.model_validate(db_user)
-                ).model_dump()
-
-            logger.info(f"User {db_user.email} registered successfully without email verification.")
+            logger.info(f"User {db_user.email} registered successfully.")
             return ResponseData(
                 success=True,
-                message="User registered successfully. Email verification is disabled outside production.",
+                message="User registered successfully.",
                 data=UserRead.model_validate(db_user)
             ).model_dump()
 
@@ -281,299 +193,3 @@ class AuthService:
             await self.db.rollback()
             logger.error(f"Token revocation error: {str(e)}")
             raise InternalServerError("Token revocation failed", "TOKEN_REVOCATION_ERROR")
-
-    async def handle_google_callback(self, request: Request):
-        """Handle Google OAuth callback with user creation/authentication logic"""
-        try:
-            token = await settings.oauth_google.google.authorize_access_token(request)
-            user_info = token.get('userinfo')
-            
-            if not user_info:
-                raise UnauthorizedError("Failed to retrieve user information from Google", "OAUTH_USER_INFO_ERROR")
-
-            email = user_info.get('email')
-            if not email:
-                raise UnauthorizedError("Email not provided by Google", "OAUTH_EMAIL_MISSING")
-
-            if settings.is_production and user_info.get('email_verified') is not True:
-                raise UnauthorizedError("Google account email is not verified", "OAUTH_EMAIL_UNVERIFIED")
-
-            first_name = user_info.get('given_name', '')
-            last_name = user_info.get('family_name', '')
-            
-            # Get or create user
-            user_in_db = await self.auth_dao.get_user_by_email(email)
-            if not user_in_db:
-                user_data = {
-                    "email": email,
-                    "first_name": first_name,
-                    "last_name": last_name,
-                    "verified": True,
-                    "auth_type": AuthType.GOOGLE
-                }
-                user_in_db = await self.auth_dao.create_user(user_data)
-                logger.info(f"New user created via Google OAuth: {email}")
-            
-            # Generate tokens
-            tokens = await self._create_oauth_tokens(email)
-            
-            return ResponseData(
-                success=True,
-                message="Google authentication successful",
-                data=tokens
-            ).model_dump()
-            
-        except (UnauthorizedError, InternalServerError):
-            await self.db.rollback()
-            raise
-        except Exception as e:
-            await self.db.rollback()
-            logger.error(f"Google OAuth callback error: {str(e)}")
-            raise InternalServerError("Google authentication failed", "GOOGLE_OAUTH_ERROR")
-
-    async def handle_microsoft_callback(self, request: Request):
-        """Handle Microsoft OAuth callback with user creation/authentication logic"""
-        try:
-            token = await settings.oauth_microsoft.microsoft.authorize_access_token(request)
-            user_info = token.get('userinfo')
-            
-            if not user_info:
-                raise UnauthorizedError("Failed to retrieve user information from Microsoft", "OAUTH_USER_INFO_ERROR")
-
-            email = user_info.get('email')
-            if not email:
-                raise UnauthorizedError("Email not provided by Microsoft", "OAUTH_EMAIL_MISSING")
-
-            first_name = user_info.get('given_name', '')
-            last_name = user_info.get('family_name', '')
-            
-            # Get or create user
-            user_in_db = await self.auth_dao.get_user_by_email(email)
-            if not user_in_db:
-                user_data = {
-                    "email": email,
-                    "first_name": first_name,
-                    "last_name": last_name,
-                    "verified": True,
-                    "auth_type": AuthType.MICROSOFT
-                }
-                user_in_db = await self.auth_dao.create_user(user_data)
-                logger.info(f"New user created via Microsoft OAuth: {email}")
-            
-            # Generate tokens
-            tokens = await self._create_oauth_tokens(email)
-            
-            return ResponseData(
-                success=True,
-                message="Microsoft authentication successful",
-                data=tokens
-            ).model_dump()
-            
-        except (UnauthorizedError, InternalServerError):
-            await self.db.rollback()
-            raise
-        except Exception as e:
-            await self.db.rollback()
-            logger.error(f"Microsoft OAuth callback error: {str(e)}")
-            raise InternalServerError("Microsoft authentication failed", "MICROSOFT_OAUTH_ERROR")
-
-    async def handle_github_callback(self, request: Request):
-        """Handle GitHub OAuth callback with user creation/authentication logic"""
-        try:
-            token = await settings.oauth_github.github.authorize_access_token(request)
-            
-            # Get user info from GitHub API
-            resp = await settings.oauth_github.github.get('user', token=token)
-            user_info = resp.json()
-            
-            # Require a verified primary email in production. Development can
-            # use the primary email returned by GitHub without this check.
-            if settings.is_production:
-                resp = await settings.oauth_github.github.get('user/emails', token=token)
-                emails = resp.json()
-                primary_email = next(
-                    (
-                        item['email'] for item in emails
-                        if item.get('primary') and item.get('verified')
-                    ),
-                    None,
-                )
-                if not primary_email:
-                    raise UnauthorizedError(
-                        "GitHub account has no verified primary email",
-                        "OAUTH_EMAIL_UNVERIFIED",
-                    )
-                user_info['email'] = primary_email
-            elif not user_info.get('email'):
-                resp = await settings.oauth_github.github.get('user/emails', token=token)
-                emails = resp.json()
-                primary_email = next((item['email'] for item in emails if item.get('primary')), None)
-                user_info['email'] = primary_email
-            
-            if not user_info or not user_info.get('email'):
-                raise UnauthorizedError("Failed to retrieve email from GitHub", "GITHUB_EMAIL_ERROR")
-
-            email = user_info['email']
-            name_parts = (user_info.get('name', '')).split(' ', 1)
-            first_name = name_parts[0] if name_parts else ''
-            last_name = name_parts[1] if len(name_parts) > 1 else ''
-            
-            # Get or create user
-            user_in_db = await self.auth_dao.get_user_by_email(email)
-            if not user_in_db:
-                user_data = {
-                    "email": email,
-                    "first_name": first_name,
-                    "last_name": last_name,
-                    "verified": True,
-                    "auth_type": AuthType.GITHUB
-                }
-                user_in_db = await self.auth_dao.create_user(user_data)
-                logger.info(f"New user created via GitHub OAuth: {email}")
-            
-            # Generate tokens
-            tokens = await self._create_oauth_tokens(email)
-            
-            return ResponseData(
-                success=True,
-                message="GitHub authentication successful",
-                data=tokens
-            ).model_dump()
-            
-        except (UnauthorizedError, InternalServerError):
-            raise
-        except Exception as e:
-            logger.error(f"GitHub OAuth callback error: {str(e)}")
-            raise InternalServerError("GitHub authentication failed", "GITHUB_OAUTH_ERROR")
-
-    async def verify_user_email(self, code: str):
-        """Verify user email with business logic"""
-        try:
-            redis_code_value = await self.redis_client.get("email_verification:" + code)
-            if not redis_code_value:
-                logger.warning(f"Email verification attempt with invalid code: {code}")
-                raise UnauthorizedError("Invalid or expired verification code", "INVALID_VERIFICATION_CODE")
-            
-            try:
-                verification_data = json.loads(redis_code_value)
-            except json.JSONDecodeError:
-                # Older verification entries store the email as a plain string.
-                verification_data = redis_code_value
-
-            email = (
-                verification_data.get("email")
-                if isinstance(verification_data, dict)
-                else verification_data
-            )
-            
-            if not email:
-                raise InternalServerError("Invalid verification data", "VERIFICATION_DATA_ERROR")
-            
-            # Update user verification status
-            success = await self.auth_dao.update_user_verification_status(email, True)
-            if not success:
-                raise NotFoundError("User not found", "USER_NOT_FOUND")
-            
-            # Delete the verification code from Redis
-            await self.redis_client.delete("email_verification:" + code)
-            
-            logger.info(f"Email {email} verified successfully.")
-            
-            return ResponseData(
-                success=True,
-                message="Email verified successfully"
-            ).model_dump()
-            
-        except (UnauthorizedError, NotFoundError, InternalServerError):
-            raise
-        except Exception as e:
-            logger.error(f"Email verification error: {str(e)}")
-            raise InternalServerError("Email verification failed", "EMAIL_VERIFICATION_ERROR")
-
-    async def initiate_password_reset(self, user_id: int, background_tasks: BackgroundTasks):
-        """Initiate password reset process"""
-        try:
-            user = await self.auth_dao.get_user_by_id(user_id)
-            if not user:
-                logger.warning(f"Password reset attempt for non-existent email: {user_id}")
-                raise NotFoundError("User with this email does not exist", "USER_NOT_FOUND")
-            
-            background_tasks.add_task(
-                send_forgot_password_email,
-                redis_client=self.redis_client,
-                email=user.email,
-                first_name=user.first_name,
-                title="forgot_password"
-            )
-            
-            logger.info(f"Password reset email sent to {user_id}.")
-            
-            return ResponseData(
-                success=True,
-                message="Password reset email sent successfully"
-            ).model_dump()
-            
-        except NotFoundError:
-            raise
-        except Exception as e:
-            logger.error(f"Password reset initiation error: {str(e)}")
-            raise InternalServerError("Failed to initiate password reset", "PASSWORD_RESET_INITIATION_ERROR")
-
-    async def reset_user_password(self, code: str, new_password: str):
-        """Reset user password with business logic"""
-        try:
-            redis_code_value = await self.redis_client.get("forgot_password:" + code)
-            if not redis_code_value:
-                logger.warning(f"Password reset attempt with invalid code: {code}")
-                raise UnauthorizedError("Invalid or expired reset code", "INVALID_RESET_CODE")
-            
-            json_object = json.loads(redis_code_value)
-            email = json_object.get("email")
-            
-            if not email:
-                raise InternalServerError("Invalid reset data", "RESET_DATA_ERROR")
-            
-            # Hash the new password
-            hashed_password = await get_password_hash(new_password)
-            
-            # Update user password
-            success = await self.auth_dao.update_user_password(email, hashed_password)
-            if not success:
-                raise NotFoundError("User not found", "USER_NOT_FOUND")
-            
-            # Delete the reset code from Redis
-            await self.redis_client.delete("forgot_password:" + code)
-            
-            logger.info(f"Password reset successfully for {email}.")
-            
-            return ResponseData(
-                success=True,
-                message="Password reset successfully"
-            ).model_dump()
-            
-        except (UnauthorizedError, NotFoundError, InternalServerError):
-            raise
-        except Exception as e:
-            logger.error(f"Password reset error: {str(e)}")
-            raise InternalServerError("Password reset failed", "PASSWORD_RESET_ERROR")
-
-    async def _create_oauth_tokens(self, email: str):
-        """Helper method to create OAuth tokens"""
-        try:
-            access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
-            access_token = await settings.auth_instance.create_access_token(
-                data={"sub": email}, expires_delta=access_token_expires
-            )
-            refresh_token_expires = timedelta(days=settings.refresh_token_expire_days)
-            refresh_token = await settings.auth_instance.create_refresh_token(
-                data={"sub": email}, expires_delta=refresh_token_expires, db=self.auth_dao.db
-            )
-            
-            return {
-                "access_token": access_token, 
-                "refresh_token": refresh_token, 
-                "token_type": "bearer"
-            }
-        except Exception as e:
-            logger.error(f"OAuth token creation error: {str(e)}")
-            raise InternalServerError("Failed to create authentication tokens", "OAUTH_TOKEN_ERROR")
