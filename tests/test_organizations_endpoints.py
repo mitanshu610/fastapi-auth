@@ -14,7 +14,8 @@ class TestOrganizationsEndpoints:
     @pytest.fixture
     def client(self):
         """Test client fixture"""
-        return TestClient(app)
+        with TestClient(app) as test_client:
+            yield test_client
 
     @pytest.fixture
     def mock_auth_headers(self):
@@ -363,4 +364,4 @@ class TestOrganizationsEndpoints:
             elif method == "DELETE":
                 response = client.delete(endpoint)
             
-            assert response.status_code == status.HTTP_401_UNAUTHORIZED 
+            assert response.status_code == status.HTTP_401_UNAUTHORIZED
