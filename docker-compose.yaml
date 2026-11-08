@@ -6,7 +6,6 @@ services:
     volumes:
       - .:/usr/src/app
     environment:
-      APP_ENV: "${APP_ENV:-dev}"
       ACCESS_TOKEN_EXPIRE_MINUTES: "${ACCESS_TOKEN_EXPIRE_MINUTES:-15}"
       REFRESH_TOKEN_EXPIRE_DAYS: "${REFRESH_TOKEN_EXPIRE_DAYS:-7}"
       SECRET_KEY: "${SECRET_KEY:-local-development-only-change-me}"
@@ -14,16 +13,6 @@ services:
       DATABASE_URL: "${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@db:5432/fastapi_auth}"
       REDIS_DATABASE_URL: "${REDIS_DATABASE_URL:-redis://redis:6379/1}"
       AUTH_MODE: "${AUTH_MODE:-jwt}"
-      GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
-      GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET:-}"
-      GITHUB_CLIENT_ID: "${GITHUB_CLIENT_ID:-}"
-      GITHUB_CLIENT_SECRET: "${GITHUB_CLIENT_SECRET:-}"
-      MICROSOFT_CLIENT_ID: "${MICROSOFT_CLIENT_ID:-}"
-      MICROSOFT_CLIENT_SECRET: "${MICROSOFT_CLIENT_SECRET:-}"
-      HINATA_HOST: "${HINATA_HOST:-localhost}"
-      EMAIL_PROVIDER: "${EMAIL_PROVIDER:-netcore}"
-      SMTP_FROM_EMAIL: "${SMTP_FROM_EMAIL:-no-reply@example.com}"
-      SMTP_NETCORE: "${SMTP_NETCORE:-}"
     command: ["sh", "-c", "alembic upgrade head && python main.py"]
     depends_on:
       db:

@@ -1,14 +1,12 @@
-from fastapi import HTTPException, BackgroundTasks
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 
 from organizations.dao import OrganizationDAO
-from auth.dao import UserDAO
+from auth.dao import AuthDAO
 from organizations.schemas import OrganizationCreate, OrganizationRead, OrganizationUserRead
 from auth.models import User
 from utils.custom_logger import logger
-from db.redis_connection import RedisClient
-from organizations.utils import send_invite_email
 from utils.serializers import ResponseData
 from utils.exceptions import (
     NotFoundError, ValidationError as CustomValidationError, ConflictError, 
@@ -16,10 +14,9 @@ from utils.exceptions import (
 )
 
 class OrganizationService:
-    def __init__(self, db: AsyncSession, redis_client: RedisClient):
+    def __init__(self, db: AsyncSession):
         self.organization_dao = OrganizationDAO(db=db)
-        self.user_dao = UserDAO(db=db, encryptor=None)  # Add encryptor if needed
-        self.redis_client = redis_client
+        self.user_dao = AuthDAO(db=db)
 
     async def create_organization(
         self, org_create_data: OrganizationCreate, current_user: User
@@ -209,7 +206,6 @@ class OrganizationService:
         organization_id: int,
         role_id: int,
         current_user: User,
-        background_tasks: BackgroundTasks,
     ) -> dict:
         try:
             org_admin_membership = await self.organization_dao.get_organization_user(
@@ -221,18 +217,10 @@ class OrganizationService:
             target_user = await self.user_dao.get_user_by_email(user_email)
 
             if not target_user:
-                background_tasks.add_task(
-                    send_invite_email,
-                    redis_client=self.redis_client,
-                    email=user_email,
-                    title="invitation_email",
-                    organization_id=organization_id,
-                    role_id=role_id,
+                raise NotFoundError(
+                    "User must register before being added to the organization",
+                    "USER_NOT_FOUND",
                 )
-                return ResponseData(
-                    success=True,
-                    message="User not found. Invitation sent successfully."
-                ).model_dump()
 
             existing_membership = await self.organization_dao.get_organization_user(
                 user_id=target_user.id, organization_id=organization_id
@@ -251,7 +239,7 @@ class OrganizationService:
                 message="User added to organization successfully"
             ).model_dump()
             
-        except (UnauthorizedError, ConflictError):
+        except (UnauthorizedError, ConflictError, NotFoundError):
             raise
         except Exception as e:
             logger.error(f"Error assigning user to organization: {e}")

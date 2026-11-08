@@ -1,6 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import update
 from typing import Optional
 
 from auth.models import User, RefreshToken
@@ -50,15 +49,6 @@ class AuthDAO:
             logger.error(f"Error getting user by email {email}: {str(e)}")
             raise
 
-    async def get_user_by_id(self, user_id: int) -> Optional[User]:
-        """Get user by email"""
-        try:
-            result = await self.db.execute(select(User).where(User.id == user_id))
-            return result.scalars().first()
-        except Exception as e:
-            logger.error(f"Error getting user by email {user_id}: {str(e)}")
-            raise
-
     async def create_user(self, user_data: dict) -> User:
         """Create a new user"""
         try:
@@ -94,35 +84,5 @@ class AuthDAO:
             return False
         except Exception as e:
             logger.error(f"Error deleting refresh token: {str(e)}")
-            await self.db.rollback()
-            raise
-
-    async def update_user_verification_status(self, email: str, verified: bool) -> bool:
-        """Update user verification status"""
-        try:
-            result = await self.db.execute(
-                update(User)
-                .where(User.email == email)
-                .values(verified=verified)
-            )
-            await self.db.commit()
-            return result.rowcount > 0
-        except Exception as e:
-            logger.error(f"Error updating user verification status: {str(e)}")
-            await self.db.rollback()
-            raise
-
-    async def update_user_password(self, email: str, hashed_password: str) -> bool:
-        """Update user password"""
-        try:
-            result = await self.db.execute(
-                update(User)
-                .where(User.email == email)
-                .values(hashed_password=hashed_password)
-            )
-            await self.db.commit()
-            return result.rowcount > 0
-        except Exception as e:
-            logger.error(f"Error updating user password: {str(e)}")
             await self.db.rollback()
             raise
